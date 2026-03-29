@@ -21,25 +21,35 @@ let scrapeProgress = { done: 0, total: IDS.length, current: '', log: [], error: 
 
 const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
 
+const CHROME_ARGS = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-gpu',
+  '--disable-accelerated-2d-canvas',
+  '--disable-infobars',
+  '--window-size=1280,900',
+  '--disable-background-timer-throttling',
+  '--disable-backgrounding-occluded-windows',
+  '--disable-renderer-backgrounding',
+  '--disable-features=TranslateUI',
+  '--disable-extensions',
+  '--no-first-run',
+  '--mute-audio',
+  '--hide-scrollbars'
+];
+
 async function getBrowser() {
   const puppeteer = require('puppeteer-core');
-  console.log('  🔍 Launching Chrome at:', CHROME_PATH);
+  console.log('  🔍 Launching Chrome:', CHROME_PATH);
   const browser = await puppeteer.launch({
     executablePath: CHROME_PATH,
     headless: 'new',
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--disable-gpu',
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process',
-      '--disable-extensions'
-    ]
+    args: CHROME_ARGS,
+    ignoreHTTPSErrors: true,
+    dumpio: true
   });
-  console.log('  ✅ Browser launched successfully');
+  console.log('  ✅ Browser launched');
   return browser;
 }
 
@@ -47,9 +57,9 @@ async function scrapeAgent(page, id) {
   try {
     await page.goto(`https://degen.virtuals.io/agents/${id}`, {
       waitUntil: 'networkidle2',
-      timeout: 25000
+      timeout: 30000
     });
-    await page.waitForSelector('[class*="font-mono"]', { timeout: 10000 }).catch(() => {});
+    await page.waitForSelector('[class*="font-mono"]', { timeout: 12000 }).catch(() => {});
 
     const data = await page.evaluate((agentId) => {
       const result = {
@@ -91,7 +101,12 @@ async function scrapeAgent(page, id) {
     data.totalPnl = +((data.realizedPnl ?? 0) + (data.unrealizedPnl ?? 0)).toFixed(2);
     return data;
   } catch(e) {
-    return { id, name: `Agent #${id}`, realizedPnl: null, unrealizedPnl: null, roe: null, winRate: null, closedPos: null, totalPnl: null, error: e.message };
+    return {
+      id, name: `Agent #${id}`,
+      realizedPnl: null, unrealizedPnl: null,
+      roe: null, winRate: null, closedPos: null,
+      totalPnl: null, error: e.message
+    };
   }
 }
 
@@ -99,11 +114,11 @@ async function scrapeAll() {
   if (isScraping) return;
   isScraping = true;
   scrapeProgress = { done: 0, total: IDS.length, current: 'Launching browser...', log: [], error: null };
-  console.log('\n  🚀 scrapeAll() called —', IDS.length, 'agents');
+  console.log('\n  🚀 scrapeAll() —', IDS.length, 'agents');
 
   try {
     const browser = await getBrowser();
-    console.log('  ✅ Browser ready, starting workers...');
+    console.log('  ✅ Browser ready');
 
     const CONCURRENCY = 3;
     const queue = [...IDS];
@@ -112,21 +127,22 @@ async function scrapeAll() {
     async function worker() {
       const page = await browser.newPage();
       await page.setViewport({ width: 1280, height: 900 });
-      await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36');
+      await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
       while (queue.length > 0) {
         const id = queue.shift();
         scrapeProgress.current = `Scraping #${id}...`;
         const data = await scrapeAgent(page, id);
         results.push(data);
+        cachedData = [...results];
         scrapeProgress.done++;
+
         const pct = Math.round((scrapeProgress.done / IDS.length) * 100);
         const ok = data.realizedPnl !== null;
         const msg = `${ok?'✓':'✗'} [${scrapeProgress.done}/${IDS.length}] #${id} ${data.name} (${pct}%)`;
         console.log(' ', msg);
         scrapeProgress.log.unshift(msg);
         if (scrapeProgress.log.length > 30) scrapeProgress.log.pop();
-        // Update cache progressively
-        cachedData = [...results];
       }
       await page.close();
     }
@@ -138,11 +154,15 @@ async function scrapeAll() {
     scrapeProgress.current = '— Complete —';
     isScraping = false;
 
-    try { fs.writeFileSync(path.join(__dirname, 'cache.json'), JSON.stringify(results, null, 2)); } catch(e) { console.log('Cache write failed:', e.message); }
-    console.log(`\n  ✅ Done — ${results.filter(r=>r.realizedPnl!==null).length} / ${IDS.length} scraped\n`);
+    try {
+      fs.writeFileSync(path.join(__dirname, 'cache.json'), JSON.stringify(results, null, 2));
+    } catch(e) { console.log('  ⚠ Cache write failed:', e.message); }
+
+    const success = results.filter(r => r.realizedPnl !== null).length;
+    console.log(`\n  ✅ Done — ${success} / ${IDS.length} scraped\n`);
 
   } catch(e) {
-    console.error('  ❌ scrapeAll error:', e.message);
+    console.error('  ❌ Error:', e.message);
     console.error(e.stack);
     scrapeProgress.error = e.message;
     scrapeProgress.current = '— Failed —';
@@ -153,7 +173,10 @@ async function scrapeAll() {
 // Load cache on startup
 const cachePath = path.join(__dirname, 'cache.json');
 if (fs.existsSync(cachePath)) {
-  try { cachedData = JSON.parse(fs.readFileSync(cachePath, 'utf8')); console.log(`  📦 Cache: ${cachedData.length} agents`); } catch(e) {}
+  try {
+    cachedData = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+    console.log(`  📦 Cache: ${cachedData.length} agents`);
+  } catch(e) {}
 }
 
 const server = http.createServer((req, res) => {
@@ -173,7 +196,7 @@ const server = http.createServer((req, res) => {
       return;
     }
     scrapeAll().catch(e => {
-      console.error('Unhandled scrapeAll error:', e);
+      console.error('Unhandled error:', e);
       scrapeProgress.error = e.message;
       scrapeProgress.current = '— Failed —';
       isScraping = false;
@@ -195,26 +218,25 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Test browser launch directly
   if (url === '/api/testbrowser') {
     (async () => {
       try {
         const puppeteer = require('puppeteer-core');
-        console.log('Testing browser launch...');
         const browser = await puppeteer.launch({
           executablePath: CHROME_PATH,
           headless: 'new',
-          args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--single-process','--no-zygote']
+          args: CHROME_ARGS,
+          dumpio: true
         });
         const page = await browser.newPage();
-        await page.goto('https://example.com', {timeout:10000});
+        await page.goto('https://example.com', {timeout:15000, waitUntil:'domcontentloaded'});
         const title = await page.title();
         await browser.close();
         res.writeHead(200, {'Content-Type':'application/json'});
         res.end(JSON.stringify({status:'success', title}));
       } catch(e) {
         res.writeHead(200, {'Content-Type':'application/json'});
-        res.end(JSON.stringify({status:'error', message:e.message}));
+        res.end(JSON.stringify({status:'error', message:e.message, stack:e.stack}));
       }
     })();
     return;
