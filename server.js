@@ -20,21 +20,26 @@ let isScraping = false;
 let scrapeProgress = { done: 0, total: IDS.length, current: '', log: [], error: null };
 
 async function getBrowser() {
-  try {
-    const chromium = require('@sparticuz/chromium');
-    const puppeteer = require('puppeteer-core');
-    const browser = await puppeteer.launch({
-      args: chromium.args,
-      defaultViewport: chromium.defaultViewport,
-      executablePath: await chromium.executablePath(),
-      headless: chromium.headless,
-    });
-    console.log('  ✅ Browser launched via @sparticuz/chromium');
-    return browser;
-  } catch(e) {
-    console.error('  ❌ Browser launch failed:', e.message);
-    throw e;
-  }
+  const puppeteer = require('puppeteer-core');
+  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
+  console.log('  🔍 Using Chrome at:', executablePath);
+  const browser = await puppeteer.launch({
+    executablePath,
+    headless: 'new',
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--disable-gpu',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process',
+      '--disable-extensions'
+    ]
+  });
+  console.log('  ✅ Browser launched');
+  return browser;
 }
 
 async function scrapeAgent(page, id) {
@@ -47,13 +52,11 @@ async function scrapeAgent(page, id) {
 
     const data = await page.evaluate((agentId) => {
       const result = {
-        id: agentId,
-        name: `Agent #${agentId}`,
+        id: agentId, name: `Agent #${agentId}`,
         realizedPnl: null, unrealizedPnl: null,
         roe: null, winRate: null, closedPos: null,
         volume: null, holdings: null, openPositions: null
       };
-
       const h1 = document.querySelector('h1');
       if (h1 && h1.textContent.trim().length < 60) result.name = h1.textContent.trim();
 
@@ -69,7 +72,6 @@ async function scrapeAgent(page, id) {
         const m = str.match(/(\d+)\s*%/);
         return m ? parseInt(m[1]) : null;
       }
-
       const divs = Array.from(document.querySelectorAll('div'));
       for (let i = 0; i < divs.length; i++) {
         const text = divs[i].textContent.trim();
@@ -89,14 +91,8 @@ async function scrapeAgent(page, id) {
 
     data.totalPnl = +((data.realizedPnl ?? 0) + (data.unrealizedPnl ?? 0)).toFixed(2);
     return data;
-
-  } catch (e) {
-    return {
-      id, name: `Agent #${id}`,
-      realizedPnl: null, unrealizedPnl: null,
-      roe: null, winRate: null, closedPos: null,
-      totalPnl: null, error: e.message
-    };
+  } catch(e) {
+    return { id, name: `Agent #${id}`, realizedPnl: null, unrealizedPnl: null, roe: null, winRate: null, closedPos: null, totalPnl: null, error: e.message };
   }
 }
 
@@ -109,15 +105,14 @@ async function scrapeAll() {
   try {
     browser = await getBrowser();
   } catch(e) {
-    scrapeProgress.error = 'Browser failed to launch: ' + e.message;
+    scrapeProgress.error = 'Browser failed: ' + e.message;
     scrapeProgress.current = '— Failed —';
     isScraping = false;
-    console.error('  ❌ Could not launch browser:', e.message);
+    console.error('  ❌ Browser launch error:', e.message);
     return;
   }
 
   console.log('\n  🚀 Scraping', IDS.length, 'agents...\n');
-
   const CONCURRENCY = 3;
   const queue = [...IDS];
   const results = [];
@@ -126,17 +121,15 @@ async function scrapeAll() {
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 900 });
     await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-
     while (queue.length > 0) {
       const id = queue.shift();
-      scrapeProgress.current = `Scraping agent #${id}...`;
+      scrapeProgress.current = `Scraping #${id}...`;
       const data = await scrapeAgent(page, id);
       results.push(data);
       scrapeProgress.done++;
-
       const pct = Math.round((scrapeProgress.done / IDS.length) * 100);
-      const status = data.realizedPnl !== null ? '✓' : '✗';
-      const msg = `${status} [${scrapeProgress.done}/${IDS.length}] #${id} ${data.name} — R:$${data.realizedPnl?.toFixed(2) ?? 'N/A'} WR:${data.winRate ?? 'N/A'}% (${pct}%)`;
+      const ok = data.realizedPnl !== null;
+      const msg = `${ok?'✓':'✗'} [${scrapeProgress.done}/${IDS.length}] #${id} ${data.name} (${pct}%)`;
       console.log(' ', msg);
       scrapeProgress.log.unshift(msg);
       if (scrapeProgress.log.length > 30) scrapeProgress.log.pop();
@@ -151,69 +144,40 @@ async function scrapeAll() {
   scrapeProgress.current = '— Complete —';
   isScraping = false;
 
-  try {
-    fs.writeFileSync(path.join(__dirname, 'cache.json'), JSON.stringify(results, null, 2));
-  } catch(e) { console.log('  ⚠ Could not write cache:', e.message); }
-
-  const success = results.filter(r => r.realizedPnl !== null).length;
-  console.log(`\n  ✅ Done — ${success} / ${IDS.length} agents scraped\n`);
+  try { fs.writeFileSync(path.join(__dirname, 'cache.json'), JSON.stringify(results, null, 2)); } catch(e) {}
+  console.log(`\n  ✅ Done — ${results.filter(r=>r.realizedPnl!==null).length} / ${IDS.length} scraped\n`);
 }
 
-// Load cache on startup
 const cachePath = path.join(__dirname, 'cache.json');
 if (fs.existsSync(cachePath)) {
-  try {
-    cachedData = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
-    console.log(`  📦 Cache loaded — ${cachedData.length} agents`);
-  } catch(e) { console.log('  ⚠ Could not read cache'); }
+  try { cachedData = JSON.parse(fs.readFileSync(cachePath, 'utf8')); console.log(`  📦 Cache: ${cachedData.length} agents`); } catch(e) {}
 }
 
-// HTTP Server
 const server = http.createServer((req, res) => {
   const url = req.url.split('?')[0];
   res.setHeader('Access-Control-Allow-Origin', '*');
 
-  if (url === '/api/data') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(cachedData));
-    return;
-  }
+  if (url === '/api/data') { res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify(cachedData)); return; }
   if (url === '/api/scrape') {
-    if (isScraping) {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'already_running' }));
-      return;
-    }
+    if (isScraping) { res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({status:'already_running'})); return; }
     scrapeAll();
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'started' }));
-    return;
+    res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({status:'started'})); return;
   }
-  if (url === '/api/progress') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ...scrapeProgress, isScraping, cachedCount: cachedData.length }));
-    return;
-  }
-  if (url === '/api/test') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', node: process.version, platform: process.platform }));
-    return;
-  }
+  if (url === '/api/progress') { res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({...scrapeProgress,isScraping,cachedCount:cachedData.length})); return; }
+  if (url === '/api/test') { res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({status:'ok',node:process.version,platform:process.platform,chrome:process.env.PUPPETEER_EXECUTABLE_PATH||'/usr/bin/google-chrome-stable'})); return; }
 
-  let filePath = path.join(__dirname, url === '/' ? 'index.html' : url);
+  let filePath = path.join(__dirname, url==='/'?'index.html':url);
   const ext = path.extname(filePath);
-  const mime = { '.html':'text/html', '.js':'application/javascript', '.css':'text/css', '.json':'application/json' };
+  const mime = {'.html':'text/html','.js':'application/javascript','.css':'text/css','.json':'application/json'};
   fs.readFile(filePath, (err, data) => {
     if (err) { res.writeHead(404); res.end('Not found'); return; }
-    res.writeHead(200, { 'Content-Type': mime[ext] || 'text/plain' });
+    res.writeHead(200,{'Content-Type':mime[ext]||'text/plain'});
     res.end(data);
   });
 });
 
 server.listen(PORT, () => {
   console.log('');
-  console.log('  ✅  Virtuals Degen Dashboard — 114 agents');
-  console.log('  👉  Port:', PORT);
-  console.log('  🔍  Test: /api/test');
+  console.log('  ✅  Virtuals Degen — 114 agents · Port:', PORT);
   console.log('');
 });
