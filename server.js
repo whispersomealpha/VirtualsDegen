@@ -17,15 +17,33 @@ const IDS = [
 
 let cachedData = [];
 let isScraping = false;
-let scrapeProgress = { done: 0, total: IDS.length, current: '', log: [] };
+let scrapeProgress = { done: 0, total: IDS.length, current: '', log: [], error: null };
+
+async function getBrowser() {
+  try {
+    const chromium = require('@sparticuz/chromium');
+    const puppeteer = require('puppeteer-core');
+    const browser = await puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+    });
+    console.log('  ✅ Browser launched via @sparticuz/chromium');
+    return browser;
+  } catch(e) {
+    console.error('  ❌ Browser launch failed:', e.message);
+    throw e;
+  }
+}
 
 async function scrapeAgent(page, id) {
   try {
     await page.goto(`https://degen.virtuals.io/agents/${id}`, {
       waitUntil: 'networkidle2',
-      timeout: 20000
+      timeout: 25000
     });
-    await page.waitForSelector('[class*="font-mono"]', { timeout: 8000 }).catch(() => {});
+    await page.waitForSelector('[class*="font-mono"]', { timeout: 10000 }).catch(() => {});
 
     const data = await page.evaluate((agentId) => {
       const result = {
@@ -85,26 +103,22 @@ async function scrapeAgent(page, id) {
 async function scrapeAll() {
   if (isScraping) return;
   isScraping = true;
-  scrapeProgress = { done: 0, total: IDS.length, current: 'Starting...', log: [] };
+  scrapeProgress = { done: 0, total: IDS.length, current: 'Launching browser...', log: [], error: null };
 
-  let puppeteer;
+  let browser;
   try {
-    puppeteer = require('puppeteer');
+    browser = await getBrowser();
   } catch(e) {
-    console.error('Puppeteer not found. Run: npm install');
+    scrapeProgress.error = 'Browser failed to launch: ' + e.message;
+    scrapeProgress.current = '— Failed —';
     isScraping = false;
+    console.error('  ❌ Could not launch browser:', e.message);
     return;
   }
 
-  console.log('\n  🚀 Starting scrape of', IDS.length, 'agents...\n');
+  console.log('\n  🚀 Scraping', IDS.length, 'agents...\n');
 
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-accelerated-2d-canvas', '--disable-gpu', '--window-size=1280,900']
-  });
-
-  const CONCURRENCY = 4;
+  const CONCURRENCY = 3;
   const queue = [...IDS];
   const results = [];
 
@@ -137,7 +151,10 @@ async function scrapeAll() {
   scrapeProgress.current = '— Complete —';
   isScraping = false;
 
-  fs.writeFileSync(path.join(__dirname, 'cache.json'), JSON.stringify(results, null, 2));
+  try {
+    fs.writeFileSync(path.join(__dirname, 'cache.json'), JSON.stringify(results, null, 2));
+  } catch(e) { console.log('  ⚠ Could not write cache:', e.message); }
+
   const success = results.filter(r => r.realizedPnl !== null).length;
   console.log(`\n  ✅ Done — ${success} / ${IDS.length} agents scraped\n`);
 }
@@ -177,6 +194,11 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ ...scrapeProgress, isScraping, cachedCount: cachedData.length }));
     return;
   }
+  if (url === '/api/test') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', node: process.version, platform: process.platform }));
+    return;
+  }
 
   let filePath = path.join(__dirname, url === '/' ? 'index.html' : url);
   const ext = path.extname(filePath);
@@ -191,10 +213,7 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log('');
   console.log('  ✅  Virtuals Degen Dashboard — 114 agents');
-  console.log('');
-  console.log('  👉  http://localhost:' + PORT);
-  console.log('');
-  console.log('  Click "↻ Refresh Live Data" to scrape all agents.');
-  console.log('  Press Ctrl+C to stop.');
+  console.log('  👉  Port:', PORT);
+  console.log('  🔍  Test: /api/test');
   console.log('');
 });
