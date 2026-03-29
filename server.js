@@ -19,12 +19,13 @@ let cachedData = [];
 let isScraping = false;
 let scrapeProgress = { done: 0, total: IDS.length, current: '', log: [], error: null };
 
+const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
+
 async function getBrowser() {
   const puppeteer = require('puppeteer-core');
-  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
-  console.log('  🔍 Using Chrome at:', executablePath);
+  console.log('  🔍 Launching Chrome at:', CHROME_PATH);
   const browser = await puppeteer.launch({
-    executablePath,
+    executablePath: CHROME_PATH,
     headless: 'new',
     args: [
       '--no-sandbox',
@@ -38,7 +39,7 @@ async function getBrowser() {
       '--disable-extensions'
     ]
   });
-  console.log('  ✅ Browser launched');
+  console.log('  ✅ Browser launched successfully');
   return browser;
 }
 
@@ -59,11 +60,9 @@ async function scrapeAgent(page, id) {
       };
       const h1 = document.querySelector('h1');
       if (h1 && h1.textContent.trim().length < 60) result.name = h1.textContent.trim();
-
       function parseVal(str) {
         if (!str) return null;
-        const s = str.trim();
-        const neg = s.startsWith('-');
+        const s = str.trim(), neg = s.startsWith('-');
         const n = parseFloat(s.replace(/[^0-9.]/g, ''));
         return isNaN(n) ? null : (neg ? -n : n);
       }
@@ -100,54 +99,58 @@ async function scrapeAll() {
   if (isScraping) return;
   isScraping = true;
   scrapeProgress = { done: 0, total: IDS.length, current: 'Launching browser...', log: [], error: null };
+  console.log('\n  🚀 scrapeAll() called —', IDS.length, 'agents');
 
-  let browser;
   try {
-    browser = await getBrowser();
+    const browser = await getBrowser();
+    console.log('  ✅ Browser ready, starting workers...');
+
+    const CONCURRENCY = 3;
+    const queue = [...IDS];
+    const results = [];
+
+    async function worker() {
+      const page = await browser.newPage();
+      await page.setViewport({ width: 1280, height: 900 });
+      await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36');
+      while (queue.length > 0) {
+        const id = queue.shift();
+        scrapeProgress.current = `Scraping #${id}...`;
+        const data = await scrapeAgent(page, id);
+        results.push(data);
+        scrapeProgress.done++;
+        const pct = Math.round((scrapeProgress.done / IDS.length) * 100);
+        const ok = data.realizedPnl !== null;
+        const msg = `${ok?'✓':'✗'} [${scrapeProgress.done}/${IDS.length}] #${id} ${data.name} (${pct}%)`;
+        console.log(' ', msg);
+        scrapeProgress.log.unshift(msg);
+        if (scrapeProgress.log.length > 30) scrapeProgress.log.pop();
+        // Update cache progressively
+        cachedData = [...results];
+      }
+      await page.close();
+    }
+
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+    await browser.close();
+
+    cachedData = results;
+    scrapeProgress.current = '— Complete —';
+    isScraping = false;
+
+    try { fs.writeFileSync(path.join(__dirname, 'cache.json'), JSON.stringify(results, null, 2)); } catch(e) { console.log('Cache write failed:', e.message); }
+    console.log(`\n  ✅ Done — ${results.filter(r=>r.realizedPnl!==null).length} / ${IDS.length} scraped\n`);
+
   } catch(e) {
-    scrapeProgress.error = 'Browser failed: ' + e.message;
+    console.error('  ❌ scrapeAll error:', e.message);
+    console.error(e.stack);
+    scrapeProgress.error = e.message;
     scrapeProgress.current = '— Failed —';
     isScraping = false;
-    console.error('  ❌ Browser launch error:', e.message);
-    return;
   }
-
-  console.log('\n  🚀 Scraping', IDS.length, 'agents...\n');
-  const CONCURRENCY = 3;
-  const queue = [...IDS];
-  const results = [];
-
-  async function worker() {
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 900 });
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-    while (queue.length > 0) {
-      const id = queue.shift();
-      scrapeProgress.current = `Scraping #${id}...`;
-      const data = await scrapeAgent(page, id);
-      results.push(data);
-      scrapeProgress.done++;
-      const pct = Math.round((scrapeProgress.done / IDS.length) * 100);
-      const ok = data.realizedPnl !== null;
-      const msg = `${ok?'✓':'✗'} [${scrapeProgress.done}/${IDS.length}] #${id} ${data.name} (${pct}%)`;
-      console.log(' ', msg);
-      scrapeProgress.log.unshift(msg);
-      if (scrapeProgress.log.length > 30) scrapeProgress.log.pop();
-    }
-    await page.close();
-  }
-
-  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-  await browser.close();
-
-  cachedData = results;
-  scrapeProgress.current = '— Complete —';
-  isScraping = false;
-
-  try { fs.writeFileSync(path.join(__dirname, 'cache.json'), JSON.stringify(results, null, 2)); } catch(e) {}
-  console.log(`\n  ✅ Done — ${results.filter(r=>r.realizedPnl!==null).length} / ${IDS.length} scraped\n`);
 }
 
+// Load cache on startup
 const cachePath = path.join(__dirname, 'cache.json');
 if (fs.existsSync(cachePath)) {
   try { cachedData = JSON.parse(fs.readFileSync(cachePath, 'utf8')); console.log(`  📦 Cache: ${cachedData.length} agents`); } catch(e) {}
@@ -157,21 +160,72 @@ const server = http.createServer((req, res) => {
   const url = req.url.split('?')[0];
   res.setHeader('Access-Control-Allow-Origin', '*');
 
-  if (url === '/api/data') { res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify(cachedData)); return; }
-  if (url === '/api/scrape') {
-    if (isScraping) { res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({status:'already_running'})); return; }
-    scrapeAll();
-    res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({status:'started'})); return;
+  if (url === '/api/data') {
+    res.writeHead(200, {'Content-Type':'application/json'});
+    res.end(JSON.stringify(cachedData));
+    return;
   }
-  if (url === '/api/progress') { res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({...scrapeProgress,isScraping,cachedCount:cachedData.length})); return; }
-  if (url === '/api/test') { res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({status:'ok',node:process.version,platform:process.platform,chrome:process.env.PUPPETEER_EXECUTABLE_PATH||'/usr/bin/google-chrome-stable'})); return; }
+
+  if (url === '/api/scrape') {
+    if (isScraping) {
+      res.writeHead(200, {'Content-Type':'application/json'});
+      res.end(JSON.stringify({status:'already_running'}));
+      return;
+    }
+    scrapeAll().catch(e => {
+      console.error('Unhandled scrapeAll error:', e);
+      scrapeProgress.error = e.message;
+      scrapeProgress.current = '— Failed —';
+      isScraping = false;
+    });
+    res.writeHead(200, {'Content-Type':'application/json'});
+    res.end(JSON.stringify({status:'started'}));
+    return;
+  }
+
+  if (url === '/api/progress') {
+    res.writeHead(200, {'Content-Type':'application/json'});
+    res.end(JSON.stringify({...scrapeProgress, isScraping, cachedCount:cachedData.length}));
+    return;
+  }
+
+  if (url === '/api/test') {
+    res.writeHead(200, {'Content-Type':'application/json'});
+    res.end(JSON.stringify({status:'ok', node:process.version, platform:process.platform, chrome:CHROME_PATH}));
+    return;
+  }
+
+  // Test browser launch directly
+  if (url === '/api/testbrowser') {
+    (async () => {
+      try {
+        const puppeteer = require('puppeteer-core');
+        console.log('Testing browser launch...');
+        const browser = await puppeteer.launch({
+          executablePath: CHROME_PATH,
+          headless: 'new',
+          args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--single-process','--no-zygote']
+        });
+        const page = await browser.newPage();
+        await page.goto('https://example.com', {timeout:10000});
+        const title = await page.title();
+        await browser.close();
+        res.writeHead(200, {'Content-Type':'application/json'});
+        res.end(JSON.stringify({status:'success', title}));
+      } catch(e) {
+        res.writeHead(200, {'Content-Type':'application/json'});
+        res.end(JSON.stringify({status:'error', message:e.message}));
+      }
+    })();
+    return;
+  }
 
   let filePath = path.join(__dirname, url==='/'?'index.html':url);
   const ext = path.extname(filePath);
   const mime = {'.html':'text/html','.js':'application/javascript','.css':'text/css','.json':'application/json'};
   fs.readFile(filePath, (err, data) => {
     if (err) { res.writeHead(404); res.end('Not found'); return; }
-    res.writeHead(200,{'Content-Type':mime[ext]||'text/plain'});
+    res.writeHead(200, {'Content-Type':mime[ext]||'text/plain'});
     res.end(data);
   });
 });
@@ -179,5 +233,6 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log('');
   console.log('  ✅  Virtuals Degen — 114 agents · Port:', PORT);
+  console.log('  🔍  Chrome:', CHROME_PATH);
   console.log('');
 });
