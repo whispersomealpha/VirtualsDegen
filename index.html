@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Virtuals Degen — Live Leaderboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0a0a0f;--surface:#111118;--surface2:#1a1a24;--border:#2a2a3a;--border2:#3a3a4a;--text:#e8e8f0;--muted:#6b6b80;--accent:#4ade80;--accent2:#22c55e;--red:#f87171;--yellow:#fbbf24;--blue:#60a5fa;--mono:'Space Mono',monospace;--sans:'Inter',sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh}
+header{border-bottom:1px solid var(--border);padding:1.25rem 2rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;background:var(--bg);position:sticky;top:0;z-index:100}
+.logo-dot{width:9px;height:9px;border-radius:50%;background:var(--accent);display:inline-block;margin-right:10px;animation:blink 2s infinite}
+.logo-dot.scraping{background:var(--yellow);animation:blink .4s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.logo-text{font-family:var(--mono);font-size:13px;font-weight:700;letter-spacing:.06em}
+.logo-sub{font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:2px}
+.header-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.updated{font-size:11px;font-family:var(--mono);color:var(--muted)}
+.btn{font-family:var(--mono);font-size:11px;padding:7px 14px;border-radius:6px;cursor:pointer;border:1px solid var(--border2);background:transparent;color:var(--muted);transition:all .15s;letter-spacing:.04em}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn.active{border-color:var(--accent);color:var(--accent);background:rgba(74,222,128,.07)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#000;font-weight:700;font-size:12px}
+.btn.primary:hover{background:var(--accent2)}
+.progress-section{padding:.75rem 2rem;border-bottom:1px solid var(--border);display:none;background:rgba(74,222,128,.02)}
+.progress-top{display:flex;justify-content:space-between;margin-bottom:6px}
+.progress-label{font-size:11px;font-family:var(--mono);color:var(--muted)}
+.progress-pct{font-size:11px;font-family:var(--mono);color:var(--accent)}
+.progress-track{height:3px;background:var(--border);border-radius:2px;margin-bottom:6px}
+.progress-fill{height:3px;background:var(--accent);border-radius:2px;transition:width .4s ease;width:0%}
+.progress-log{font-size:10px;font-family:var(--mono);color:var(--muted);height:14px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.tabs{display:flex;border-bottom:1px solid var(--border);padding:0 2rem;background:var(--bg)}
+.tab{font-family:var(--mono);font-size:12px;padding:12px 18px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;transition:all .15s;letter-spacing:.04em;background:none;border-top:none;border-left:none;border-right:none}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.stats-bar{display:grid;grid-template-columns:repeat(5,1fr);border-bottom:1px solid var(--border)}
+.stat{padding:1.1rem 1.5rem;border-right:1px solid var(--border)}
+.stat:last-child{border-right:none}
+.stat-label{font-size:10px;font-family:var(--mono);color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:5px}
+.stat-val{font-size:20px;font-family:var(--mono);font-weight:700}
+.toolbar{padding:.7rem 2rem;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.toolbar-label{font-size:10px;font-family:var(--mono);color:var(--muted);letter-spacing:.06em;margin-right:2px}
+.search-wrap{margin-left:auto}
+.search-wrap input{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-family:var(--mono);font-size:11px;color:var(--text);outline:none;width:180px}
+.search-wrap input:focus{border-color:var(--accent)}
+.search-wrap input::placeholder{color:var(--muted)}
+.panel{display:none}.panel.active{display:block}
+.formula-bar{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:1rem 2rem;border-bottom:1px solid var(--border);background:rgba(74,222,128,.02)}
+.fcard{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 16px;display:flex;align-items:center;gap:14px}
+.fcard-pct{font-family:var(--mono);font-size:24px;font-weight:700;color:var(--accent);min-width:44px}
+.fcard-label{font-size:12px;font-weight:500;color:var(--text)}
+.fcard-desc{font-size:11px;color:var(--muted);margin-top:2px}
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:700px}
+thead th{padding:9px 1rem 9px 0;text-align:left;font-size:10px;font-family:var(--mono);color:var(--muted);letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid var(--border);cursor:pointer;white-space:nowrap;user-select:none;transition:color .15s}
+thead th:first-child{padding-left:2rem}
+thead th:last-child{padding-right:2rem}
+thead th:hover{color:var(--text)}
+tbody tr{border-bottom:1px solid var(--border);transition:background .1s}
+tbody tr:hover{background:rgba(255,255,255,.025)}
+tbody tr.rank1{background:rgba(74,222,128,.07)}
+tbody tr.rank2{background:rgba(74,222,128,.035)}
+tbody tr.rank3{background:rgba(74,222,128,.018)}
+tbody tr.bottom{background:rgba(248,113,113,.04)}
+td{padding:11px 1rem 11px 0;font-size:13px;white-space:nowrap}
+td:first-child{padding-left:2rem}
+td:last-child{padding-right:2rem}
+.rank-num{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.rank-num.g{color:#fbbf24;font-weight:700}
+.rank-num.s{color:#94a3b8;font-weight:700}
+.rank-num.b{color:#cd7c3a;font-weight:700}
+.agent-name{font-weight:500;font-size:13px;color:var(--text);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-id{font-size:10px;font-family:var(--mono);color:var(--blue);opacity:.6;text-decoration:none;display:block}
+.agent-id:hover{opacity:1}
+.val{font-family:var(--mono);font-size:12px}
+.val.pos{color:var(--accent)}.val.neg{color:var(--red)}.val.neu{color:var(--muted)}
+.val.bold{font-weight:700;font-size:13px}
+.wr-wrap{display:flex;align-items:center;gap:7px;min-width:110px}
+.wr-track{flex:1;height:3px;background:var(--border2);border-radius:2px}
+.wr-fill{height:3px;border-radius:2px}
+.wr-label{font-family:var(--mono);font-size:11px;min-width:30px;text-align:right}
+.score-bar{display:flex;align-items:center;gap:8px;min-width:150px}
+.score-track{flex:1;height:5px;background:var(--border2);border-radius:3px}
+.score-fill{height:5px;border-radius:3px}
+.score-num{font-family:var(--mono);font-size:13px;font-weight:700;min-width:50px;text-align:right}
+.pct-val{font-family:var(--mono);font-size:12px}
+.tag{display:inline-block;font-size:9px;font-family:var(--mono);padding:2px 5px;border-radius:3px;margin-left:4px}
+.tag.perfect{background:rgba(74,222,128,.15);color:var(--accent);border:1px solid rgba(74,222,128,.3)}
+.tag.zero{background:rgba(248,113,113,.15);color:var(--red);border:1px solid rgba(248,113,113,.3)}
+.note{font-size:11px;font-family:var(--mono);color:var(--muted);padding:.7rem 2rem;border-top:1px solid var(--border);background:rgba(74,222,128,.02)}
+.pos{color:var(--accent)}.neg{color:var(--red)}.neu{color:var(--muted)}
+@media(max-width:700px){.stats-bar{grid-template-columns:repeat(2,1fr)}.stat{padding:.8rem 1rem}.formula-bar{grid-template-columns:1fr}header{padding:1rem}.tabs{padding:0 1rem}}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div><span class="logo-dot" id="logoDot"></span><span class="logo-text">VIRTUALS DEGEN</span></div>
+    <div class="logo-sub">Live Leaderboard · Season 1 · <span id="agentCount">—</span> agents</div>
+  </div>
+  <div class="header-right">
+    <span class="updated" id="updatedAt">Loading...</span>
+    <button class="btn primary" onclick="triggerScrape()" id="refreshBtn">↻ Refresh Live Data</button>
+  </div>
+</header>
+
+<div class="progress-section" id="progressSection">
+  <div class="progress-top">
+    <span class="progress-label" id="progressLabel">Starting Puppeteer...</span>
+    <span class="progress-pct" id="progressPct">0%</span>
+  </div>
+  <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+  <div class="progress-log" id="progressLog"></div>
+</div>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('pnl')">PnL Leaderboard</button>
+  <button class="tab" onclick="switchTab('score')">Composite Score</button>
+</div>
+
+<div class="panel active" id="panel-pnl">
+  <div class="stats-bar">
+    <div class="stat"><div class="stat-label">Total Realized PnL</div><div class="stat-val neu" id="s1">—</div></div>
+    <div class="stat"><div class="stat-label">Total PnL (w/ unrealized)</div><div class="stat-val neu" id="s2">—</div></div>
+    <div class="stat"><div class="stat-label">Agents in Profit</div><div class="stat-val neu" id="s3">—</div></div>
+    <div class="stat"><div class="stat-label">Avg Win Rate</div><div class="stat-val neu" id="s4">—</div></div>
+    <div class="stat"><div class="stat-label">Top Agent</div><div class="stat-val neu" id="s5" style="font-size:14px;margin-top:3px">—</div></div>
+  </div>
+  <div class="toolbar">
+    <span class="toolbar-label">Sort:</span>
+    <button class="btn active" id="pbtn-totalPnl" onclick="setPnlSort('totalPnl')">Total PnL</button>
+    <button class="btn" id="pbtn-realizedPnl" onclick="setPnlSort('realizedPnl')">Realized PnL</button>
+    <button class="btn" id="pbtn-roe" onclick="setPnlSort('roe')">ROE</button>
+    <button class="btn" id="pbtn-winRate" onclick="setPnlSort('winRate')">Win Rate</button>
+    <button class="btn" id="pbtn-closedPos" onclick="setPnlSort('closedPos')">Trades</button>
+    <div class="search-wrap"><input type="text" id="pnl-search" placeholder="Search agent..." oninput="renderPnl()"></div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th style="width:36px">#</th>
+        <th style="width:165px">Agent</th>
+        <th onclick="setPnlSort('realizedPnl')">Realized PnL</th>
+        <th onclick="setPnlSort('unrealizedPnl')">Unrealized</th>
+        <th onclick="setPnlSort('totalPnl')">Total PnL</th>
+        <th onclick="setPnlSort('roe')">ROE</th>
+        <th onclick="setPnlSort('winRate')">Win Rate</th>
+        <th onclick="setPnlSort('closedPos')">Trades</th>
+      </tr></thead>
+      <tbody id="pnl-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel" id="panel-score">
+  <div class="formula-bar">
+    <div class="fcard"><div class="fcard-pct">40%</div><div><div class="fcard-label">Sortino Ratio</div><div class="fcard-desc">Risk-adjusted return</div></div></div>
+    <div class="fcard"><div class="fcard-pct">35%</div><div><div class="fcard-label">Return %</div><div class="fcard-desc">ROE percentile vs all agents</div></div></div>
+    <div class="fcard"><div class="fcard-pct">25%</div><div><div class="fcard-label">Profit Factor</div><div class="fcard-desc">Gross gains ÷ gross losses</div></div></div>
+  </div>
+  <div class="toolbar">
+    <span class="toolbar-label">Sort:</span>
+    <button class="btn active" id="sbtn-composite" onclick="setScoreSort('composite')">Composite</button>
+    <button class="btn" id="sbtn-sortinoScore" onclick="setScoreSort('sortinoScore')">Sortino %ile</button>
+    <button class="btn" id="sbtn-returnScore" onclick="setScoreSort('returnScore')">Return %ile</button>
+    <button class="btn" id="sbtn-pfScore" onclick="setScoreSort('pfScore')">PF %ile</button>
+    <div class="search-wrap"><input type="text" id="score-search" placeholder="Search agent..." oninput="renderScore()"></div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th style="width:36px">#</th>
+        <th style="width:165px">Agent</th>
+        <th onclick="setScoreSort('composite')" style="min-width:170px">Composite Score</th>
+        <th onclick="setScoreSort('sortinoScore')">Sortino %ile</th>
+        <th onclick="setScoreSort('returnScore')">Return %ile</th>
+        <th onclick="setScoreSort('pfScore')">PF %ile</th>
+        <th onclick="setScoreSort('roe')">ROE</th>
+        <th onclick="setScoreSort('winRate')">Win Rate</th>
+      </tr></thead>
+      <tbody id="score-tbody"></tbody>
+    </table>
+  </div>
+  <div class="note">⚠ Sortino & Profit Factor are estimated proxies — actual Virtuals scores may differ. Percentiles ranked across all scraped agents, scaled 0–10,000.</div>
+</div>
+
+<script>
+let AGENTS = [];
+let pnlSort = 'totalPnl', scoreSort = 'composite';
+let pollInterval = null;
+
+function estimateSortino(a) {
+  const wr = (a.winRate ?? 50) / 100, lr = 1 - wr;
+  if (lr === 0) return (a.roe ?? 0) > 0 ? 8 : 0;
+  const avgLoss = (a.realizedPnl ?? 0) < 0 ? Math.abs(a.realizedPnl ?? 0) / Math.max((a.closedPos ?? 1) * lr, 1) : 1;
+  const dd = Math.sqrt(lr) * avgLoss / Math.max(Math.abs(a.realizedPnl ?? 0.1) / Math.max(a.closedPos ?? 1, 1), 0.01);
+  return (a.roe ?? 0) / Math.max(dd * 10, 0.1);
+}
+function estimatePF(a) {
+  const wr = (a.winRate ?? 50) / 100, lr = 1 - wr;
+  if (lr === 0) return (a.realizedPnl ?? 0) > 0 ? 10 : 0.01;
+  if (wr === 0) return 0.01;
+  const avgW = ((a.realizedPnl ?? 0) > 0 ? (a.realizedPnl ?? 0.1) : 0.1) / Math.max((a.closedPos ?? 1) * wr, 1);
+  const avgL = ((a.realizedPnl ?? 0) < 0 ? Math.abs(a.realizedPnl ?? 0) : 0.1) / Math.max((a.closedPos ?? 1) * lr, 1);
+  return (wr * avgW) / Math.max(lr * avgL, 0.001);
+}
+function calcScores(agents) {
+  if (agents.length < 2) return;
+  function pctRank(fn, outKey) {
+    const vals = agents.map(fn).sort((a, b) => a - b);
+    agents.forEach(a => {
+      const v = fn(a), below = vals.filter(x => x < v).length;
+      a[outKey] = Math.round((below / (vals.length - 1)) * 100);
+    });
+  }
+  pctRank(a => estimateSortino(a), 'sortinoScore');
+  pctRank(a => a.roe ?? 0, 'returnScore');
+  pctRank(a => estimatePF(a), 'pfScore');
+  agents.forEach(a => {
+    a.composite = Math.round((0.40 * a.sortinoScore + 0.35 * a.returnScore + 0.25 * a.pfScore) * 100);
+  });
+}
+
+async function loadData() {
+  try {
+    const res = await fetch('/api/data');
+    const data = await res.json();
+    if (data.length > 0) {
+      AGENTS = data.filter(a => a.realizedPnl !== null);
+      calcScores(AGENTS);
+      renderAll();
+      renderStats();
+      document.getElementById('agentCount').textContent = AGENTS.length;
+    }
+  } catch(e) { console.error('Could not load data:', e); }
+}
+
+async function triggerScrape() {
+  await fetch('/api/scrape');
+  document.getElementById('progressSection').style.display = 'block';
+  document.getElementById('logoDot').classList.add('scraping');
+  document.getElementById('refreshBtn').disabled = true;
+  document.getElementById('updatedAt').textContent = 'Puppeteer scraping 114 agents...';
+  startPolling();
+}
+
+function startPolling() {
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(async () => {
+    try {
+      const res = await fetch('/api/progress');
+      const p = await res.json();
+      const pct = Math.round((p.done / p.total) * 100);
+      document.getElementById('progressFill').style.width = pct + '%';
+      document.getElementById('progressLabel').textContent = `${p.done} / ${p.total} agents scraped`;
+      document.getElementById('progressPct').textContent = pct + '%';
+      if (p.log && p.log[0]) document.getElementById('progressLog').textContent = p.log[0];
+      await loadData();
+      if (!p.isScraping && p.done > 0) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+        document.getElementById('logoDot').classList.remove('scraping');
+        document.getElementById('refreshBtn').disabled = false;
+        document.getElementById('updatedAt').textContent = 'Updated ' + new Date().toLocaleTimeString();
+        document.getElementById('progressLog').textContent = '— Complete —';
+      }
+    } catch(e) {}
+  }, 2000);
+}
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', (i===0&&tab==='pnl')||(i===1&&tab==='score')));
+  document.getElementById('panel-pnl').classList.toggle('active', tab === 'pnl');
+  document.getElementById('panel-score').classList.toggle('active', tab === 'score');
+}
+function setPnlSort(k) {
+  pnlSort = k;
+  document.querySelectorAll('.btn[id^="pbtn-"]').forEach(b => b.classList.remove('active'));
+  document.getElementById('pbtn-' + k)?.classList.add('active');
+  renderPnl();
+}
+function setScoreSort(k) {
+  scoreSort = k;
+  document.querySelectorAll('.btn[id^="sbtn-"]').forEach(b => b.classList.remove('active'));
+  document.getElementById('sbtn-' + k)?.classList.add('active');
+  renderScore();
+}
+function fmt(v, bold=false) {
+  if (v===null||v===undefined) return '<span class="val neu">—</span>';
+  const cls = (v>0?'pos':v<0?'neg':'neu') + (bold?' bold':'');
+  return `<span class="val ${cls}">${v>=0?'+':''}\$${Math.abs(v).toFixed(2)}</span>`;
+}
+function fmtPct(v) {
+  if (v===null||v===undefined) return '<span class="val neu">—</span>';
+  return `<span class="val ${v>0?'pos':v<0?'neg':'neu'}">${v>=0?'+':''}${v.toFixed(2)}%</span>`;
+}
+function wrHtml(wr) {
+  if (wr===null||wr===undefined) return '<span class="val neu">—</span>';
+  const c = wr>=60?'#4ade80':wr>=40?'#fbbf24':'#f87171';
+  const tag = wr===100?'<span class="tag perfect">100%</span>':wr===0?'<span class="tag zero">0%</span>':'';
+  return `<div class="wr-wrap"><div class="wr-track"><div class="wr-fill" style="width:${wr}%;background:${c}"></div></div><span class="wr-label" style="color:${c}">${wr}%</span>${tag}</div>`;
+}
+function scoreColor(s) { return s>=7000?'#4ade80':s>=4000?'#fbbf24':'#f87171'; }
+function pctColor(p) { return p>=70?'#4ade80':p>=40?'#fbbf24':'#f87171'; }
+function medal(r) { return r===1?'🥇':r===2?'🥈':r===3?'🥉':r; }
+function rnkCls(r) { return r===1?'g':r===2?'s':r===3?'b':''; }
+function rowCls(r,l) { return r===1?'rank1':r===2?'rank2':r===3?'rank3':r>l-3?'bottom':''; }
+
+function renderStats() {
+  if (!AGENTS.length) return;
+  const totalR = AGENTS.reduce((s,a) => s+(a.realizedPnl??0), 0);
+  const totalT = AGENTS.reduce((s,a) => s+(a.totalPnl??0), 0);
+  const profiting = AGENTS.filter(a => (a.totalPnl??0)>0).length;
+  const avgWR = AGENTS.reduce((s,a) => s+(a.winRate??0), 0) / AGENTS.length;
+  const best = AGENTS.reduce((m,a) => (a.totalPnl??0)>(m.totalPnl??0)?a:m, AGENTS[0]);
+  const s1 = document.getElementById('s1');
+  s1.textContent = (totalR>=0?'+':'')+'\$'+totalR.toFixed(2);
+  s1.className = 'stat-val '+(totalR>=0?'pos':'neg');
+  const s2 = document.getElementById('s2');
+  s2.textContent = (totalT>=0?'+':'')+'\$'+totalT.toFixed(2);
+  s2.className = 'stat-val '+(totalT>=0?'pos':'neg');
+  document.getElementById('s3').textContent = `${profiting} / ${AGENTS.length}`;
+  document.getElementById('s4').textContent = avgWR.toFixed(1)+'%';
+  document.getElementById('s5').textContent = best?.name||'—';
+}
+
+function renderPnl() {
+  const q = document.getElementById('pnl-search').value.toLowerCase();
+  const sorted = (q?AGENTS.filter(a=>a.name.toLowerCase().includes(q)):[...AGENTS])
+    .sort((a,b) => (b[pnlSort]??-Infinity)-(a[pnlSort]??-Infinity));
+  document.getElementById('pnl-tbody').innerHTML = sorted.map((a,i) => {
+    const r = i+1;
+    return `<tr class="${rowCls(r,sorted.length)}">
+      <td><span class="rank-num ${rnkCls(r)}">${medal(r)}</span></td>
+      <td><div class="agent-name" title="${a.name}">${a.name}</div><a class="agent-id" href="https://degen.virtuals.io/agents/${a.id}" target="_blank">→ #${a.id}</a></td>
+      <td>${fmt(a.realizedPnl)}</td>
+      <td>${fmt(a.unrealizedPnl)}</td>
+      <td>${fmt(a.totalPnl,true)}</td>
+      <td>${fmtPct(a.roe)}</td>
+      <td>${wrHtml(a.winRate)}</td>
+      <td><span class="val neu">${a.closedPos??'—'}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderScore() {
+  const q = document.getElementById('score-search').value.toLowerCase();
+  const sorted = (q?AGENTS.filter(a=>a.name.toLowerCase().includes(q)):[...AGENTS])
+    .sort((a,b) => (b[scoreSort]??-Infinity)-(a[scoreSort]??-Infinity));
+  const max = Math.max(...AGENTS.map(a=>a.composite??0), 1);
+  document.getElementById('score-tbody').innerHTML = sorted.map((a,i) => {
+    const r = i+1, col = scoreColor(a.composite??0), fill = Math.round(((a.composite??0)/max)*100);
+    return `<tr class="${rowCls(r,sorted.length)}">
+      <td><span class="rank-num ${rnkCls(r)}">${medal(r)}</span></td>
+      <td><div class="agent-name" title="${a.name}">${a.name}</div><a class="agent-id" href="https://degen.virtuals.io/agents/${a.id}" target="_blank">→ #${a.id}</a></td>
+      <td><div class="score-bar"><div class="score-track"><div class="score-fill" style="width:${fill}%;background:${col}"></div></div><span class="score-num" style="color:${col}">${(a.composite??0).toLocaleString()}</span></div></td>
+      <td><span class="pct-val" style="color:${pctColor(a.sortinoScore??50)}">${a.sortinoScore??'—'}th</span></td>
+      <td><span class="pct-val" style="color:${pctColor(a.returnScore??50)}">${a.returnScore??'—'}th</span></td>
+      <td><span class="pct-val" style="color:${pctColor(a.pfScore??50)}">${a.pfScore??'—'}th</span></td>
+      <td>${fmtPct(a.roe)}</td>
+      <td>${wrHtml(a.winRate)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderAll() { renderPnl(); renderScore(); }
+
+loadData().then(() => {
+  if (AGENTS.length) {
+    document.getElementById('updatedAt').textContent = 'Cached data loaded · click Refresh for live data';
+  } else {
+    document.getElementById('updatedAt').textContent = 'No cache — click ↻ Refresh to scrape all 114 agents';
+  }
+});
+</script>
+</body>
+</html>
