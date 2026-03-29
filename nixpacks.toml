@@ -1,2 +1,32 @@
+[phases.setup]
+nixPkgs = [
+  "nodejs_18",
+  "nss",
+  "nspr",
+  "atk",
+  "cups",
+  "dbus",
+  "expat",
+  "libdrm",
+  "libxkbcommon",
+  "mesa",
+  "xorg.libX11",
+  "xorg.libXcomposite",
+  "xorg.libXdamage",
+  "xorg.libXext",
+  "xorg.libXfixes",
+  "xorg.libXrandr",
+  "xorg.libxcb",
+  "xorg.libXcursor",
+  "xorg.libXi",
+  "xorg.libXrender",
+  "xorg.libXtst",
+  "gtk3",
+  "pango",
+  "cairo",
+  "glib",
+  "alsa-lib"
+]
+
 [start]
 cmd = "node server.js"
